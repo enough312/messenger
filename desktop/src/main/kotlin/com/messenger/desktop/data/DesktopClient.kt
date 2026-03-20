@@ -22,6 +22,7 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -47,6 +48,9 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.Serializable
 
 class DesktopClient {
+    @Volatile
+    private var realtimeSession: DefaultClientWebSocketSession? = null
+
     private val httpClient = HttpClient(CIO) {
         expectSuccess = false
         install(HttpTimeout) {
@@ -139,6 +143,7 @@ class DesktopClient {
     ) {
         wakeUp(baseUrl)
         val session = httpClient.webSocketSession(urlString = baseUrl.normalizeBaseUrl().toWebSocketUrl())
+        realtimeSession = session
         try {
             session.send(Frame.Text(MessengerJson.encodeToString(WsEnvelope.serializer(), wsEnvelope(
                 type = WsTypes.AUTH,
@@ -166,6 +171,17 @@ class DesktopClient {
                                 MessengerJson.decodeFromJsonElement(Message.serializer(), envelope.payload),
                             ),
                         )
+                        WsTypes.TYPING -> {
+                            val chatId = envelope.payload["chatId"]?.toString()?.trim('"') ?: continue
+                            val userId = envelope.payload["userId"]?.toString()?.trim('"') ?: continue
+                            onEvent(
+                                DesktopRealtimeEvent.Typing(
+                                    chatId = chatId,
+                                    userId = userId,
+                                    isTyping = envelope.payload["action"]?.toString()?.trim('"') == "start",
+                                ),
+                            )
+                        }
                         WsTypes.ERROR -> onEvent(
                             DesktopRealtimeEvent.Error(
                                 envelope.payload["message"]?.toString()?.trim('"') ?: "WebSocket error",
@@ -175,8 +191,26 @@ class DesktopClient {
                 }
             }
         } finally {
+            realtimeSession = null
             session.close()
         }
+    }
+
+    suspend fun sendTyping(chatId: String, isTyping: Boolean) {
+        val session = realtimeSession ?: return
+        val type = if (isTyping) WsTypes.TYPING_START else WsTypes.TYPING_STOP
+        session.send(
+            Frame.Text(
+                MessengerJson.encodeToString(
+                    WsEnvelope.serializer(),
+                    wsEnvelope(
+                        type = type,
+                        payload = buildJsonObject { put("chatId", chatId) },
+                        json = MessengerJson,
+                    ),
+                ),
+            ),
+        )
     }
 
     private suspend inline fun <reified T> HttpResponse.decode(): T {
@@ -221,5 +255,6 @@ class DesktopClientException(
 sealed interface DesktopRealtimeEvent {
     data object Connected : DesktopRealtimeEvent
     data class NewMessage(val message: Message) : DesktopRealtimeEvent
+    data class Typing(val chatId: String, val userId: String, val isTyping: Boolean) : DesktopRealtimeEvent
     data class Error(val message: String) : DesktopRealtimeEvent
 }

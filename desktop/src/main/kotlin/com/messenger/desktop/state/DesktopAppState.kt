@@ -27,6 +27,10 @@ class DesktopAppState(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var realtimeJob: Job? = null
+    private val remoteTypingUsers = mutableStateListOf<String>()
+    private val remoteTypingExpiryJobs = mutableMapOf<String, Job>()
+    private var localTypingStopJob: Job? = null
+    private var localTypingChatId: String? = null
 
     var baseUrl by mutableStateOf("https://messenger-server-5kfw.onrender.com")
     var email by mutableStateOf("")
@@ -47,6 +51,13 @@ class DesktopAppState(
     val chats = mutableStateListOf<Chat>()
     val messages = mutableStateListOf<Message>()
     val searchResults = mutableStateListOf<User>()
+    val typingUsers: List<String> get() = remoteTypingUsers
+    val typingHint: String?
+        get() = when {
+            remoteTypingUsers.isEmpty() -> null
+            remoteTypingUsers.size == 1 -> "${selectedChatTitle()} is typing..."
+            else -> "Several people are typing..."
+        }
 
     fun submitAuth() {
         launchBusy {
@@ -96,6 +107,10 @@ class DesktopAppState(
 
     fun loadMessages(chatId: String) {
         val token = accessToken ?: return
+        if (selectedChatId != chatId) {
+            stopLocalTyping()
+            clearRemoteTyping()
+        }
         selectedChatId = chatId
         launchBusy(clearMessages = false) {
             messages.replaceAll(client.messages(baseUrl, token, chatId))
@@ -108,8 +123,31 @@ class DesktopAppState(
         if (content.isBlank()) return
         launchBusy(clearMessages = false) {
             val message = client.sendMessage(baseUrl, token, chatId, content)
+            stopLocalTyping()
             upsertMessage(message)
             refreshChats(token)
+        }
+    }
+
+    fun onComposerChanged(text: String) {
+        val chatId = selectedChatId ?: return
+        if (accessToken == null) return
+        if (text.isBlank()) {
+            stopLocalTyping()
+            return
+        }
+
+        if (localTypingChatId != chatId) {
+            localTypingChatId = chatId
+            scope.launch(Dispatchers.IO) {
+                runCatching { client.sendTyping(chatId, true) }
+            }
+        }
+
+        localTypingStopJob?.cancel()
+        localTypingStopJob = scope.launch {
+            delay(1_800)
+            stopLocalTyping()
         }
     }
 
@@ -139,6 +177,8 @@ class DesktopAppState(
 
     fun logout() {
         stopRealtime()
+        stopLocalTyping()
+        clearRemoteTyping()
         accessToken = null
         refreshToken = null
         currentUser = null
@@ -172,6 +212,7 @@ class DesktopAppState(
                     errorMessage = throwable.message ?: "Something went wrong"
                     if (throwable is DesktopClientException && throwable.status.value == 401) {
                         stopRealtime()
+                        stopLocalTyping()
                         accessToken = null
                         connectionState = ConnectionState.DISCONNECTED
                     }
@@ -198,6 +239,7 @@ class DesktopAppState(
                 if (!isActive || accessToken != token) break
                 withContext(Dispatchers.Main) {
                     connectionState = ConnectionState.DISCONNECTED
+                    clearRemoteTyping()
                     result.exceptionOrNull()?.message
                         ?.takeIf { it.isNotBlank() }
                         ?.let { errorMessage = it }
@@ -211,6 +253,7 @@ class DesktopAppState(
     private fun stopRealtime() {
         realtimeJob?.cancel()
         realtimeJob = null
+        clearRemoteTyping()
     }
 
     private suspend fun handleRealtimeEvent(token: String, event: DesktopRealtimeEvent) {
@@ -225,9 +268,13 @@ class DesktopAppState(
             }
 
             is DesktopRealtimeEvent.NewMessage -> {
+                remoteTypingUsers.remove(event.message.senderId)
+                remoteTypingExpiryJobs.remove(event.message.senderId)?.cancel()
                 upsertMessage(event.message)
                 refreshChats(token)
             }
+
+            is DesktopRealtimeEvent.Typing -> handleTypingEvent(event)
         }
     }
 
@@ -256,6 +303,44 @@ class DesktopAppState(
         clear()
         addAll(newItems)
     }
+
+    private fun handleTypingEvent(event: DesktopRealtimeEvent.Typing) {
+        if (event.chatId != selectedChatId) return
+        if (currentUser?.id == event.userId) return
+        if (event.isTyping) {
+            if (event.userId !in remoteTypingUsers) {
+                remoteTypingUsers.add(event.userId)
+            }
+            remoteTypingExpiryJobs.remove(event.userId)?.cancel()
+            remoteTypingExpiryJobs[event.userId] = scope.launch {
+                delay(3_000)
+                remoteTypingUsers.remove(event.userId)
+                remoteTypingExpiryJobs.remove(event.userId)
+            }
+        } else {
+            remoteTypingUsers.remove(event.userId)
+            remoteTypingExpiryJobs.remove(event.userId)?.cancel()
+        }
+    }
+
+    private fun stopLocalTyping() {
+        val chatId = localTypingChatId ?: return
+        localTypingStopJob?.cancel()
+        localTypingStopJob = null
+        localTypingChatId = null
+        scope.launch(Dispatchers.IO) {
+            runCatching { client.sendTyping(chatId, false) }
+        }
+    }
+
+    private fun clearRemoteTyping() {
+        remoteTypingUsers.clear()
+        remoteTypingExpiryJobs.values.forEach { it.cancel() }
+        remoteTypingExpiryJobs.clear()
+    }
+
+    private fun selectedChatTitle(): String =
+        chats.firstOrNull { it.id == selectedChatId }?.name?.takeIf { it.isNotBlank() } ?: "Someone"
 }
 
 enum class AuthMode {
