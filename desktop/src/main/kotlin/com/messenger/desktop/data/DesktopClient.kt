@@ -10,6 +10,8 @@ import com.messenger.shared.dto.ReactionRequest
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.SendMessageRequest
 import com.messenger.shared.dto.TokenResponse
+import com.messenger.shared.dto.UpdateMessageRequest
+import com.messenger.shared.dto.UpdateProfileRequest
 import com.messenger.shared.dto.UserSearchResponse
 import com.messenger.shared.dto.VerificationResponse
 import com.messenger.shared.model.Chat
@@ -30,9 +32,11 @@ import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.request.header
+import io.ktor.client.request.delete
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -160,6 +164,34 @@ class DesktopClient {
             contentType(ContentType.Application.Json)
             bearerAuth(accessToken)
             setBody(ReactionRequest(emoji))
+        }
+        return response.decode()
+    }
+
+    suspend fun updateMessage(baseUrl: String, accessToken: String, messageId: String, content: String): Message {
+        val response = httpClient.patch("${baseUrl.normalizeBaseUrl()}/messages/$messageId") {
+            accept(ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
+            bearerAuth(accessToken)
+            setBody(UpdateMessageRequest(content = content))
+        }
+        return response.decode()
+    }
+
+    suspend fun deleteMessage(baseUrl: String, accessToken: String, messageId: String) {
+        val response = httpClient.delete("${baseUrl.normalizeBaseUrl()}/messages/$messageId") {
+            accept(ContentType.Application.Json)
+            bearerAuth(accessToken)
+        }
+        response.decode<JsonObject>()
+    }
+
+    suspend fun updateProfile(baseUrl: String, accessToken: String, request: UpdateProfileRequest): User {
+        val response = httpClient.patch("${baseUrl.normalizeBaseUrl()}/users/me") {
+            accept(ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
+            bearerAuth(accessToken)
+            setBody(request)
         }
         return response.decode()
     }

@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -76,6 +78,44 @@ fun InfoPanel(state: DesktopAppState) {
                 "Username: @${state.currentUser?.username ?: "unknown"}",
             ),
         )
+
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Edit profile",
+                    color = MessengerColors.TextMuted,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = state.profileDisplayName,
+                    onValueChange = { state.profileDisplayName = it },
+                    label = { Text("Display name") },
+                )
+                OutlinedTextField(
+                    value = state.profileBio,
+                    onValueChange = { state.profileBio = it },
+                    label = { Text("Bio") },
+                )
+                OutlinedTextField(
+                    value = state.profilePhone,
+                    onValueChange = { state.profilePhone = it },
+                    label = { Text("Phone") },
+                )
+                Button(
+                    onClick = state::saveProfile,
+                    enabled = !state.isBusy,
+                ) {
+                    Text("Save profile")
+                }
+            }
+        }
 
         DetailCard(
             title = "Conversation",

@@ -38,6 +38,9 @@ fun MessageBubble(
     message: Message,
     isOwn: Boolean,
     onReact: (String, String) -> Unit,
+    onReply: (Message) -> Unit,
+    onEdit: (Message) -> Unit,
+    onDelete: (Message) -> Unit,
 ) {
     val bubbleColor = if (isOwn) MessengerColors.Accent else MessengerColors.BubbleOther
     val textColor = if (isOwn) Color.White else MaterialTheme.colorScheme.onSurface
@@ -144,6 +147,13 @@ fun MessageBubble(
                 modifier = Modifier.padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                listOf("Reply" to { onReply(message) }).forEach { (label, action) ->
+                    ActionChip(label = label, onClick = action)
+                }
+                if (isOwn && !message.isDeleted) {
+                    ActionChip(label = "Edit") { onEdit(message) }
+                    ActionChip(label = "Delete") { onDelete(message) }
+                }
                 listOf("👍", "❤️", "😂", "🔥").forEach { emoji ->
                     ReactionChip(emoji = emoji, count = null) {
                         onReact(message.id, emoji)
@@ -168,6 +178,15 @@ private fun MediaPayload(
     textColor: Color,
     metaColor: Color,
 ) {
+    if (message.isDeleted) {
+        Text(
+            text = "Message deleted",
+            color = metaColor,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        return
+    }
+
     val mediaUrl = message.mediaUrl
     if (mediaUrl == null) {
         Text(
@@ -211,6 +230,27 @@ private fun MediaPayload(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
+    }
+}
+
+@Composable
+private fun ActionChip(
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        color = Color.White.copy(alpha = 0.9f),
+        shape = RoundedCornerShape(999.dp),
+        tonalElevation = 1.dp,
+        shadowElevation = 1.dp,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MessengerColors.TextMuted,
+        )
     }
 }
 

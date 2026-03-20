@@ -2,6 +2,7 @@ package com.messenger.desktop.ui.panels
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -183,6 +184,9 @@ fun ChatPanel(
                         message = message,
                         isOwn = currentUserId != null && message.senderId == currentUserId,
                         onReact = state::reactToMessage,
+                        onReply = state::startReply,
+                        onEdit = state::startEditingMessage,
+                        onDelete = state::deleteMessage,
                     )
                 }
             }
@@ -208,8 +212,25 @@ fun ChatPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            state.replyTarget?.let { reply ->
+                ComposerNotice(
+                    title = "Replying to ${reply.senderId.take(8)}",
+                    body = reply.content ?: "[${reply.type.name.lowercase()}]",
+                    onDismiss = state::clearReply,
+                )
+            }
+            state.editingMessageId?.let { editingId ->
+                val editingMessage = state.messages.firstOrNull { it.id == editingId }
+                ComposerNotice(
+                    title = "Editing message",
+                    body = editingMessage?.content ?: "",
+                    onDismiss = state::cancelEditingMessage,
+                )
+            }
             InputBar(
                 chatId = chatId,
+                initialText = state.composerInitialText,
+                resetToken = state.composerResetToken,
                 enabled = !state.isBusy && !state.isUploadingAttachment,
                 onTypingChanged = state::onComposerChanged,
                 onAttach = state::sendAttachment,
@@ -223,3 +244,47 @@ private data class PrependRestore(
     val index: Int,
     val offset: Int,
 )
+
+@Composable
+private fun ComposerNotice(
+    title: String,
+    body: String,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MessengerColors.Accent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MessengerColors.TextMuted,
+                )
+            }
+            Text(
+                text = "Cancel",
+                modifier = Modifier
+                    .background(MessengerColors.AccentSoft, androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .clickable(onClick = onDismiss),
+                color = MessengerColors.Accent,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}

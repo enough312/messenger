@@ -36,12 +36,14 @@ import java.io.File
 @Composable
 fun InputBar(
     chatId: String,
+    initialText: String = "",
+    resetToken: Int = 0,
     enabled: Boolean = true,
     onTypingChanged: (String) -> Unit,
     onAttach: (File) -> Unit = {},
     onSend: (String) -> Unit,
 ) {
-    var value by remember(chatId) { mutableStateOf("") }
+    var value by remember(chatId, resetToken) { mutableStateOf(initialText) }
 
     fun submit() {
         val trimmed = value.trim()

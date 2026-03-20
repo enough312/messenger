@@ -14,6 +14,7 @@ import com.messenger.shared.dto.LoginRequest
 import com.messenger.shared.dto.SendMessageRequest
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.TokenResponse
+import com.messenger.shared.dto.UpdateProfileRequest
 import com.messenger.shared.model.MessageType
 import com.messenger.shared.model.Chat
 import com.messenger.shared.model.Message
@@ -46,6 +47,9 @@ class DesktopAppState(
     var password by mutableStateOf("")
     var username by mutableStateOf("")
     var displayName by mutableStateOf("")
+    var profileDisplayName by mutableStateOf("")
+    var profileBio by mutableStateOf("")
+    var profilePhone by mutableStateOf("")
     var authMode by mutableStateOf(AuthMode.LOGIN)
     var accessToken by mutableStateOf<String?>(null)
     var refreshToken by mutableStateOf<String?>(null)
@@ -59,6 +63,10 @@ class DesktopAppState(
     var hasOlderMessages by mutableStateOf(false)
     var isLoadingOlderMessages by mutableStateOf(false)
     var isUploadingAttachment by mutableStateOf(false)
+    var replyTarget by mutableStateOf<Message?>(null)
+    var editingMessageId by mutableStateOf<String?>(null)
+    var composerInitialText by mutableStateOf("")
+    var composerResetToken by mutableStateOf(0)
 
     val chats = mutableStateListOf<Chat>()
     val messages = mutableStateListOf<Message>()
@@ -122,6 +130,8 @@ class DesktopAppState(
         if (selectedChatId != chatId) {
             stopLocalTyping()
             clearRemoteTyping()
+            clearReply()
+            cancelEditingMessage()
         }
         selectedChatId = chatId
         clearUnread(chatId)
@@ -161,20 +171,48 @@ class DesktopAppState(
         val token = accessToken ?: return
         if (content.isBlank()) return
         launchBusy(clearMessages = false) {
-            val optimisticMessage = createOptimisticMessage(chatId, content)
-            messages.add(optimisticMessage)
-            stopLocalTyping()
-            val result = runCatching { client.sendMessage(baseUrl, token, chatId, content) }
-            result.onSuccess { message ->
-                replaceMessage(optimisticMessage.id, message)
-                updateChatLocally(message)
+            val editingId = editingMessageId
+            if (editingId != null) {
+                val updated = client.updateMessage(baseUrl, token, editingId, content)
+                upsertMessage(updated)
+                updateChatLocally(updated)
+                editingMessageId = null
+                clearComposer()
                 refreshChats(token)
-            }.onFailure { throwable ->
-                replaceMessage(
-                    optimisticMessage.id,
-                    optimisticMessage.copy(status = MessageStatus.FAILED),
+            } else {
+                val replyToId = replyTarget?.id
+                val optimisticMessage = createOptimisticMessage(
+                    chatId = chatId,
+                    content = content,
+                    type = MessageType.TEXT,
+                    replyTo = replyTarget,
                 )
-                throw throwable
+                messages.add(optimisticMessage)
+                stopLocalTyping()
+                val result = runCatching {
+                    client.sendMessage(
+                        baseUrl = baseUrl,
+                        accessToken = token,
+                        chatId = chatId,
+                        request = SendMessageRequest(
+                            content = content,
+                            replyToId = replyToId,
+                        ),
+                    )
+                }
+                result.onSuccess { message ->
+                    replaceMessage(optimisticMessage.id, message)
+                    updateChatLocally(message)
+                    clearReply()
+                    clearComposer()
+                    refreshChats(token)
+                }.onFailure { throwable ->
+                    replaceMessage(
+                        optimisticMessage.id,
+                        optimisticMessage.copy(status = MessageStatus.FAILED),
+                    )
+                    throw throwable
+                }
             }
         }
     }
@@ -246,6 +284,9 @@ class DesktopAppState(
         hasOlderMessages = false
         isLoadingOlderMessages = false
         isUploadingAttachment = false
+        clearReply()
+        editingMessageId = null
+        clearComposer()
         infoMessage = "Logged out"
         errorMessage = null
     }
@@ -259,6 +300,7 @@ class DesktopAppState(
             runCatching {
                 val upload = client.uploadMedia(baseUrl, token, file)
                 val messageType = inferMessageType(upload.contentType)
+                val replyToId = replyTarget?.id
                 val optimisticMessage = createOptimisticMessage(
                     chatId = chatId,
                     content = file.name,
@@ -266,6 +308,7 @@ class DesktopAppState(
                     mediaUrl = upload.url,
                     mediaMime = upload.contentType,
                     mediaSize = upload.size,
+                    replyTo = replyTarget,
                 )
                 messages.add(optimisticMessage)
                 val sent = client.sendMessage(
@@ -278,10 +321,13 @@ class DesktopAppState(
                         mediaUrl = upload.url,
                         mediaMime = upload.contentType,
                         mediaSize = upload.size,
+                        replyToId = replyToId,
                     ),
                 )
                 replaceMessage(optimisticMessage.id, sent)
                 updateChatLocally(sent)
+                clearReply()
+                clearComposer()
                 refreshChats(token)
             }.onFailure { throwable ->
                 errorMessage = throwable.message ?: "Failed to upload file"
@@ -303,10 +349,86 @@ class DesktopAppState(
         }
     }
 
+    fun startReply(message: Message) {
+        replyTarget = message
+        editingMessageId = null
+        if (composerInitialText.isBlank()) {
+            resetComposer("")
+        }
+    }
+
+    fun clearReply() {
+        replyTarget = null
+    }
+
+    fun startEditingMessage(message: Message) {
+        editingMessageId = message.id
+        replyTarget = null
+        resetComposer(message.content.orEmpty())
+    }
+
+    fun cancelEditingMessage() {
+        editingMessageId = null
+        clearComposer()
+    }
+
+    fun deleteMessage(message: Message) {
+        val token = accessToken ?: return
+        scope.launch {
+            runCatching {
+                client.deleteMessage(baseUrl, token, message.id)
+                val deleted = message.copy(
+                    content = null,
+                    isDeleted = true,
+                    isEdited = false,
+                    mediaUrl = null,
+                    mediaMime = null,
+                    mediaSize = null,
+                )
+                upsertMessage(deleted)
+                updateChatLocalMessage(deleted)
+                refreshChats(token)
+            }.onFailure { throwable ->
+                errorMessage = throwable.message ?: "Failed to delete message"
+            }
+        }
+    }
+
+    fun saveProfile() {
+        val token = accessToken ?: return
+        scope.launch {
+            isBusy = true
+            runCatching {
+                val updated = client.updateProfile(
+                    baseUrl = baseUrl,
+                    accessToken = token,
+                    request = UpdateProfileRequest(
+                        displayName = profileDisplayName.trim().ifBlank { null },
+                        bio = profileBio.trim().ifBlank { null },
+                        phone = profilePhone.trim().ifBlank { null },
+                    ),
+                )
+                currentUser = updated
+                profileDisplayName = updated.displayName
+                profileBio = updated.bio.orEmpty()
+                profilePhone = updated.phone.orEmpty()
+                infoMessage = "Profile updated"
+            }.onFailure { throwable ->
+                errorMessage = throwable.message ?: "Failed to update profile"
+            }
+            isBusy = false
+        }
+    }
+
     private suspend fun onLoginSuccess(token: TokenResponse) {
         accessToken = token.accessToken
         refreshToken = token.refreshToken
         currentUser = client.me(baseUrl, token.accessToken)
+        currentUser?.let { user ->
+            profileDisplayName = user.displayName
+            profileBio = user.bio.orEmpty()
+            profilePhone = user.phone.orEmpty()
+        }
         startRealtime(token.accessToken)
         refreshChats(token.accessToken)
         selectedChatId?.let { loadMessages(it) }
@@ -520,6 +642,7 @@ class DesktopAppState(
         mediaUrl: String? = null,
         mediaMime: String? = null,
         mediaSize: Long? = null,
+        replyTo: Message? = null,
     ): Message {
         val now = System.currentTimeMillis()
         return Message(
@@ -531,6 +654,7 @@ class DesktopAppState(
             mediaUrl = mediaUrl,
             mediaMime = mediaMime,
             mediaSize = mediaSize,
+            replyTo = replyTo,
             status = MessageStatus.SENDING,
             createdAt = now,
         )
@@ -632,6 +756,15 @@ class DesktopAppState(
 
     private fun selectedChatTitle(): String =
         chats.firstOrNull { it.id == selectedChatId }?.name?.takeIf { it.isNotBlank() } ?: "Someone"
+
+    private fun resetComposer(text: String) {
+        composerInitialText = text
+        composerResetToken += 1
+    }
+
+    private fun clearComposer() {
+        resetComposer("")
+    }
 }
 
 enum class AuthMode {
