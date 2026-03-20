@@ -49,8 +49,8 @@ data class AppConfig(
                 ?: envOptional("JDBC_DATABASE_URL")
                 ?: envOptional("DATABASE_URL")
                 ?: "jdbc:postgresql://localhost:5432/messenger"
+            val (dbUserFromUrl, dbPasswordFromUrl) = parseUrlCredentials(rawDatabaseUrl.removePrefix("jdbc:"))
             val dbUrl = rawDatabaseUrl.toJdbcPostgresUrl()
-            val (dbUserFromUrl, dbPasswordFromUrl) = parseUrlCredentials(dbUrl.removePrefix("jdbc:"))
             return AppConfig(
                 appEnv = appEnv,
                 host = env("SERVER_HOST", "0.0.0.0"),
@@ -113,7 +113,14 @@ data class AppConfig(
 
         private fun String.toJdbcPostgresUrl(): String {
             if (startsWith("jdbc:postgresql://")) return this
-            if (startsWith("postgres://") || startsWith("postgresql://")) return "jdbc:$this"
+            if (startsWith("postgres://") || startsWith("postgresql://")) {
+                val uri = java.net.URI(this)
+                val host = uri.host ?: return "jdbc:$this"
+                val port = if (uri.port != -1) ":${uri.port}" else ""
+                val path = uri.rawPath ?: ""
+                val query = uri.rawQuery?.let { "?$it" } ?: ""
+                return "jdbc:postgresql://$host$port$path$query"
+            }
             return this
         }
 
