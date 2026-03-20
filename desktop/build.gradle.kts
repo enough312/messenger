@@ -16,7 +16,7 @@ compose.desktop {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe)
             includeAllModules = true
             packageName = "Messenger"
-            packageVersion = "1.0.4"
+            packageVersion = "1.0.5"
             description = "Messenger desktop client"
             vendor = "Messenger"
             windows {

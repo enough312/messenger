@@ -100,7 +100,7 @@ private fun createGraph(config: AppConfig): AppGraph {
     val signalKeyService = SignalKeyService(userRepository)
     val authService = AuthService(config, userRepository, emailService, twoFactorService)
     val userService = UserService(userRepository)
-    val chatService = ChatService(chatRepository)
+    val chatService = ChatService(chatRepository, userRepository)
     val messageService = MessageService(chatRepository, messageRepository)
     val mediaService = MediaService(config, s3Client)
     val callService = CallService()

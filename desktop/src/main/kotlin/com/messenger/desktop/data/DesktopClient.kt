@@ -13,11 +13,15 @@ import com.messenger.shared.model.Chat
 import com.messenger.shared.model.Message
 import com.messenger.shared.model.User
 import com.messenger.shared.util.MessengerJson
+import com.messenger.shared.ws.WsEnvelope
+import com.messenger.shared.ws.WsTypes
+import com.messenger.shared.ws.wsEnvelope
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -29,6 +33,17 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.websocket.Frame
+import io.ktor.websocket.close
+import io.ktor.websocket.readText
+import io.ktor.client.plugins.websocket.webSocketSession
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.Serializable
 
 class DesktopClient {
@@ -42,6 +57,7 @@ class DesktopClient {
         install(ContentNegotiation) {
             json(MessengerJson)
         }
+        install(WebSockets)
     }
 
     suspend fun register(baseUrl: String, request: RegisterRequest): VerificationResponse {
@@ -116,6 +132,53 @@ class DesktopClient {
         return response.decode()
     }
 
+    suspend fun runRealtimeSession(
+        baseUrl: String,
+        accessToken: String,
+        onEvent: suspend (DesktopRealtimeEvent) -> Unit,
+    ) {
+        wakeUp(baseUrl)
+        val session = httpClient.webSocketSession(urlString = baseUrl.normalizeBaseUrl().toWebSocketUrl())
+        try {
+            session.send(Frame.Text(MessengerJson.encodeToString(WsEnvelope.serializer(), wsEnvelope(
+                type = WsTypes.AUTH,
+                payload = buildJsonObject { put("token", accessToken) },
+                json = MessengerJson,
+            ))))
+            coroutineScope {
+                launch {
+                    while (isActive) {
+                        delay(20_000)
+                        session.send(Frame.Text(MessengerJson.encodeToString(WsEnvelope.serializer(), wsEnvelope(
+                            type = WsTypes.PING,
+                            payload = JsonObject(emptyMap()),
+                            json = MessengerJson,
+                        ))))
+                    }
+                }
+                for (frame in session.incoming) {
+                    if (frame !is Frame.Text) continue
+                    val envelope = MessengerJson.decodeFromString(WsEnvelope.serializer(), frame.readText())
+                    when (envelope.type) {
+                        WsTypes.AUTH_OK -> onEvent(DesktopRealtimeEvent.Connected)
+                        WsTypes.NEW_MESSAGE -> onEvent(
+                            DesktopRealtimeEvent.NewMessage(
+                                MessengerJson.decodeFromJsonElement(Message.serializer(), envelope.payload),
+                            ),
+                        )
+                        WsTypes.ERROR -> onEvent(
+                            DesktopRealtimeEvent.Error(
+                                envelope.payload["message"]?.toString()?.trim('"') ?: "WebSocket error",
+                            ),
+                        )
+                    }
+                }
+            }
+        } finally {
+            session.close()
+        }
+    }
+
     private suspend inline fun <reified T> HttpResponse.decode(): T {
         if (status.value in 200..299) return body()
         throw toDesktopClientException()
@@ -137,6 +200,12 @@ class DesktopClient {
     }
 
     private fun String.normalizeBaseUrl(): String = trim().trimEnd('/')
+
+    private fun String.toWebSocketUrl(): String = when {
+        startsWith("https://") -> replaceFirst("https://", "wss://") + "/ws"
+        startsWith("http://") -> replaceFirst("http://", "ws://") + "/ws"
+        else -> "ws://$this/ws"
+    }
 }
 
 @Serializable
@@ -148,3 +217,9 @@ class DesktopClientException(
     val status: HttpStatusCode,
     override val message: String,
 ) : RuntimeException(message)
+
+sealed interface DesktopRealtimeEvent {
+    data object Connected : DesktopRealtimeEvent
+    data class NewMessage(val message: Message) : DesktopRealtimeEvent
+    data class Error(val message: String) : DesktopRealtimeEvent
+}

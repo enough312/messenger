@@ -20,8 +20,9 @@ fun ChatPanel(
     chatId: String,
 ) {
     val currentUserId = state.currentUser?.id
+    val selectedChat = state.chats.firstOrNull { it.id == chatId }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Chat: $chatId")
+        Text(selectedChat?.name ?: "Private chat")
         LazyColumn(modifier = Modifier.weight(1f, fill = true), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.messages, key = { it.id }) { message ->
                 MessageBubble(message, isOwn = currentUserId != null && message.senderId == currentUserId)

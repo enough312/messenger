@@ -1,6 +1,7 @@
 package com.messenger.service
 
 import com.messenger.repository.ChatRepository
+import com.messenger.repository.UserRepository
 import com.messenger.shared.dto.AddChatMemberRequest
 import com.messenger.shared.dto.CreateChannelRequest
 import com.messenger.shared.dto.CreateGroupChatRequest
@@ -12,16 +13,19 @@ import com.messenger.shared.model.ChatMember
 
 class ChatService(
     private val chatRepository: ChatRepository,
+    private val userRepository: UserRepository,
 ) {
-    fun list(userId: String): List<Chat> = chatRepository.listChats(userId)
+    fun list(userId: String): List<Chat> = chatRepository.listChats(userId).map { enrich(userId, it) }
 
-    fun createPrivate(userId: String, request: CreatePrivateChatRequest): Chat = chatRepository.createPrivateChat(userId, request.peerUserId)
+    fun createPrivate(userId: String, request: CreatePrivateChatRequest): Chat =
+        enrich(userId, chatRepository.createPrivateChat(userId, request.peerUserId))
 
     fun createGroup(userId: String, request: CreateGroupChatRequest): Chat = chatRepository.createGroupChat(userId, request)
 
     fun createChannel(userId: String, request: CreateChannelRequest): Chat = chatRepository.createChannel(userId, request)
 
-    fun get(chatId: String, userId: String): Chat = chatRepository.getChat(chatId, userId) ?: throw ServiceException("Chat not found", 404)
+    fun get(chatId: String, userId: String): Chat =
+        (chatRepository.getChat(chatId, userId)?.let { enrich(userId, it) }) ?: throw ServiceException("Chat not found", 404)
 
     fun update(chatId: String, request: UpdateChatRequest): Chat = chatRepository.updateChat(chatId, request) ?: throw ServiceException("Chat not found", 404)
 
@@ -44,4 +48,16 @@ class ChatService(
     }
 
     fun memberIds(chatId: String): List<String> = chatRepository.getChatMemberIds(chatId)
+
+    private fun enrich(viewerId: String, chat: Chat): Chat {
+        if (chat.type.name != "PRIVATE" || !chat.name.isNullOrBlank()) return chat
+        val peer = chatRepository.getChatMemberIds(chat.id)
+            .firstOrNull { it != viewerId }
+            ?.let(userRepository::findById)
+            ?: return chat.copy(name = "Private chat")
+        return chat.copy(
+            name = peer.displayName.ifBlank { "@${peer.username}" },
+            avatarUrl = chat.avatarUrl ?: peer.avatarUrl,
+        )
+    }
 }

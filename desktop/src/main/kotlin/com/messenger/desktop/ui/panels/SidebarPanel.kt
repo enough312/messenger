@@ -6,12 +6,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
-import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.messenger.desktop.state.ConnectionState
 import com.messenger.desktop.state.DesktopAppState
 import com.messenger.shared.model.Chat
 import com.messenger.shared.model.User
@@ -24,18 +24,16 @@ fun SidebarPanel(
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(state.currentUser?.displayName ?: "Unknown user")
         Text(state.currentUser?.email ?: "")
-        Button(onClick = state::loadChats, enabled = !state.isBusy) {
-            Text("Refresh chats")
-        }
+        Text(connectionLabel(state.connectionState))
         OutlinedTextField(
             value = state.userSearchQuery,
-            onValueChange = { state.userSearchQuery = it },
+            onValueChange = {
+                state.userSearchQuery = it
+                state.searchUsers()
+            },
             label = { Text("Find users") },
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = state::searchUsers, enabled = !state.isBusy) {
-            Text("Search")
-        }
         state.searchResults.forEach { user ->
             Card(
                 modifier = Modifier
@@ -68,7 +66,13 @@ private fun SearchUserCard(user: User) {
 @Composable
 private fun ChatCard(chat: Chat) {
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(chat.name ?: "Chat ${chat.id.take(8)}")
+        Text(chat.name ?: "Private chat")
         Text(chat.lastMessage?.content ?: "No messages yet")
     }
+}
+
+private fun connectionLabel(state: ConnectionState): String = when (state) {
+    ConnectionState.CONNECTED -> "Connected"
+    ConnectionState.CONNECTING -> "Connecting..."
+    ConnectionState.DISCONNECTED -> "Offline"
 }

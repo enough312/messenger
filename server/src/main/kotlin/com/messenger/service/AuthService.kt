@@ -35,10 +35,8 @@ class AuthService(
         }
         val hash = BCrypt.hashpw(request.password, BCrypt.gensalt())
         userRepository.createUser(request, hash)
-        val code = generateCode()
-        userRepository.createEmailVerification(request.email, code, ttlMillis = 15 * 60 * 1000)
-        emailService.sendVerificationEmail(request.email, code)
-        return VerificationResponse(true, "Registration successful. Verification code was sent.")
+        userRepository.markVerified(request.email)
+        return VerificationResponse(true, "Registration successful. You can log in now.")
     }
 
     fun login(request: LoginRequest, ipAddress: String?, userAgent: String?): TokenResponse {
