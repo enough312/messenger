@@ -2,11 +2,13 @@ package com.messenger.desktop.state
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.messenger.desktop.data.DesktopClient
 import com.messenger.desktop.data.DesktopClientException
 import com.messenger.desktop.data.DesktopRealtimeEvent
+import com.messenger.shared.model.MessageStatus
 import com.messenger.shared.dto.LoginRequest
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.TokenResponse
@@ -29,8 +31,11 @@ class DesktopAppState(
     private var realtimeJob: Job? = null
     private val remoteTypingUsers = mutableStateListOf<String>()
     private val remoteTypingExpiryJobs = mutableMapOf<String, Job>()
+    private val localUnreadCounts = mutableStateMapOf<String, Int>()
+    private val sentReadMessageIds = mutableStateMapOf<String, Boolean>()
     private var localTypingStopJob: Job? = null
     private var localTypingChatId: String? = null
+    private var messagesCursor: String? = null
 
     var baseUrl by mutableStateOf("https://messenger-server-5kfw.onrender.com")
     var email by mutableStateOf("")
@@ -47,6 +52,8 @@ class DesktopAppState(
     var infoMessage by mutableStateOf<String?>(null)
     var errorMessage by mutableStateOf<String?>(null)
     var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
+    var hasOlderMessages by mutableStateOf(false)
+    var isLoadingOlderMessages by mutableStateOf(false)
 
     val chats = mutableStateListOf<Chat>()
     val messages = mutableStateListOf<Message>()
@@ -97,7 +104,7 @@ class DesktopAppState(
         val token = accessToken ?: return
         launchBusy(clearMessages = false) {
             val loaded = client.chats(baseUrl, token)
-            chats.replaceAll(loaded)
+            chats.replaceAll(applyUnreadOverlay(loaded))
             if (selectedChatId == null) {
                 selectedChatId = chats.firstOrNull()?.id
             }
@@ -112,8 +119,35 @@ class DesktopAppState(
             clearRemoteTyping()
         }
         selectedChatId = chatId
+        clearUnread(chatId)
         launchBusy(clearMessages = false) {
-            messages.replaceAll(client.messages(baseUrl, token, chatId))
+            val page = client.messages(baseUrl, token, chatId)
+            messages.replaceAll(page.items)
+            messagesCursor = page.nextCursor
+            hasOlderMessages = page.nextCursor != null
+            markVisibleMessagesRead(chatId)
+        }
+    }
+
+    fun loadOlderMessages() {
+        val token = accessToken ?: return
+        val chatId = selectedChatId ?: return
+        val cursor = messagesCursor ?: return
+        if (isLoadingOlderMessages) return
+
+        scope.launch {
+            isLoadingOlderMessages = true
+            runCatching {
+                val page = client.messages(baseUrl, token, chatId, cursor = cursor)
+                if (page.items.isNotEmpty()) {
+                    prependMessages(page.items)
+                }
+                messagesCursor = page.nextCursor
+                hasOlderMessages = page.nextCursor != null
+            }.onFailure { throwable ->
+                errorMessage = throwable.message ?: "Failed to load older messages"
+            }
+            isLoadingOlderMessages = false
         }
     }
 
@@ -122,10 +156,21 @@ class DesktopAppState(
         val token = accessToken ?: return
         if (content.isBlank()) return
         launchBusy(clearMessages = false) {
-            val message = client.sendMessage(baseUrl, token, chatId, content)
+            val optimisticMessage = createOptimisticMessage(chatId, content)
+            messages.add(optimisticMessage)
             stopLocalTyping()
-            upsertMessage(message)
-            refreshChats(token)
+            val result = runCatching { client.sendMessage(baseUrl, token, chatId, content) }
+            result.onSuccess { message ->
+                replaceMessage(optimisticMessage.id, message)
+                updateChatLocally(message)
+                refreshChats(token)
+            }.onFailure { throwable ->
+                replaceMessage(
+                    optimisticMessage.id,
+                    optimisticMessage.copy(status = MessageStatus.FAILED),
+                )
+                throw throwable
+            }
         }
     }
 
@@ -169,7 +214,10 @@ class DesktopAppState(
             val chat = client.createPrivateChat(baseUrl, token, peerUserId)
             refreshChats(token)
             selectedChatId = chat.id
-            messages.replaceAll(client.messages(baseUrl, token, chat.id))
+            val page = client.messages(baseUrl, token, chat.id)
+            messages.replaceAll(page.items)
+            messagesCursor = page.nextCursor
+            hasOlderMessages = page.nextCursor != null
             searchResults.clear()
             userSearchQuery = ""
         }
@@ -187,6 +235,11 @@ class DesktopAppState(
         chats.clear()
         messages.clear()
         searchResults.clear()
+        localUnreadCounts.clear()
+        sentReadMessageIds.clear()
+        messagesCursor = null
+        hasOlderMessages = false
+        isLoadingOlderMessages = false
         infoMessage = "Logged out"
         errorMessage = null
     }
@@ -270,7 +323,14 @@ class DesktopAppState(
             is DesktopRealtimeEvent.NewMessage -> {
                 remoteTypingUsers.remove(event.message.senderId)
                 remoteTypingExpiryJobs.remove(event.message.senderId)?.cancel()
-                upsertMessage(event.message)
+                val isCurrentChat = event.message.chatId == selectedChatId
+                if (isCurrentChat) {
+                    upsertMessage(event.message)
+                    markMessageRead(event.message)
+                } else if (event.message.senderId != currentUser?.id) {
+                    incrementUnread(event.message.chatId)
+                }
+                updateChatLocally(event.message)
                 refreshChats(token)
             }
 
@@ -280,7 +340,7 @@ class DesktopAppState(
 
     private suspend fun refreshChats(token: String) {
         val loaded = client.chats(baseUrl, token)
-        chats.replaceAll(loaded)
+        chats.replaceAll(applyUnreadOverlay(loaded))
         val currentSelection = selectedChatId
         if (currentSelection == null) {
             selectedChatId = chats.firstOrNull()?.id
@@ -294,9 +354,44 @@ class DesktopAppState(
         val existingIndex = messages.indexOfFirst { it.id == message.id }
         if (existingIndex >= 0) {
             messages[existingIndex] = message
+        } else if (message.senderId == currentUser?.id) {
+            val optimisticIndex = messages.indexOfFirst {
+                it.id.startsWith("local-") &&
+                    it.senderId == message.senderId &&
+                    it.chatId == message.chatId &&
+                    it.content == message.content
+            }
+            if (optimisticIndex >= 0) {
+                messages[optimisticIndex] = message
+            } else {
+                messages.add(message)
+            }
         } else {
             messages.add(message)
         }
+    }
+
+    private fun prependMessages(olderMessages: List<Message>) {
+        if (olderMessages.isEmpty()) return
+        val existingIds = messages.mapTo(mutableSetOf()) { it.id }
+        val uniqueItems = olderMessages.filterNot { it.id in existingIds }
+        if (uniqueItems.isEmpty()) return
+        messages.addAll(0, uniqueItems)
+    }
+
+    private fun replaceMessage(oldId: String, message: Message) {
+        val existingIndex = messages.indexOfFirst { it.id == oldId || it.id == message.id }
+        if (existingIndex >= 0) {
+            messages[existingIndex] = message
+        } else {
+            messages.add(message)
+        }
+        val duplicateIndexes = messages.withIndex()
+            .filter { it.value.id == message.id }
+            .map { it.index }
+            .drop(1)
+            .sortedDescending()
+        duplicateIndexes.forEach { messages.removeAt(it) }
     }
 
     private fun <T> MutableList<T>.replaceAll(newItems: List<T>) {
@@ -337,6 +432,81 @@ class DesktopAppState(
         remoteTypingUsers.clear()
         remoteTypingExpiryJobs.values.forEach { it.cancel() }
         remoteTypingExpiryJobs.clear()
+    }
+
+    private fun createOptimisticMessage(chatId: String, content: String): Message {
+        val now = System.currentTimeMillis()
+        return Message(
+            id = "local-$now",
+            chatId = chatId,
+            senderId = currentUser?.id.orEmpty(),
+            content = content,
+            status = MessageStatus.SENDING,
+            createdAt = now,
+        )
+    }
+
+    private fun updateChatLocally(message: Message) {
+        val index = chats.indexOfFirst { it.id == message.chatId }
+        if (index < 0) return
+        val chat = chats.removeAt(index)
+        val unreadCount = if (message.chatId == selectedChatId) 0 else effectiveUnreadCount(chat)
+        chats.add(
+            0,
+            chat.copy(
+                lastMessage = message,
+                unreadCount = unreadCount,
+            ),
+        )
+    }
+
+    private fun incrementUnread(chatId: String) {
+        localUnreadCounts[chatId] = effectiveUnreadCount(chatId) + 1
+        val index = chats.indexOfFirst { it.id == chatId }
+        if (index >= 0) {
+            val chat = chats[index]
+            chats[index] = chat.copy(unreadCount = localUnreadCounts[chatId] ?: chat.unreadCount)
+        }
+    }
+
+    private fun clearUnread(chatId: String) {
+        localUnreadCounts.remove(chatId)
+        val index = chats.indexOfFirst { it.id == chatId }
+        if (index >= 0) {
+            val chat = chats[index]
+            chats[index] = chat.copy(unreadCount = 0)
+        }
+    }
+
+    private fun effectiveUnreadCount(chatId: String): Int {
+        val localValue = localUnreadCounts[chatId]
+        val serverValue = chats.firstOrNull { it.id == chatId }?.unreadCount ?: 0
+        return localValue ?: serverValue
+    }
+
+    private fun effectiveUnreadCount(chat: Chat): Int = localUnreadCounts[chat.id] ?: chat.unreadCount
+
+    private fun applyUnreadOverlay(loaded: List<Chat>): List<Chat> = loaded.map { chat ->
+        val unreadCount = localUnreadCounts[chat.id] ?: chat.unreadCount
+        if (unreadCount == chat.unreadCount) chat else chat.copy(unreadCount = unreadCount)
+    }
+
+    private fun markVisibleMessagesRead(chatId: String) {
+        messages
+            .filter { it.chatId == chatId && it.senderId != currentUser?.id && !sentReadMessageIds.containsKey(it.id) }
+            .forEach { markMessageRead(it) }
+    }
+
+    private fun markMessageRead(message: Message) {
+        val chatId = selectedChatId ?: return
+        if (message.chatId != chatId) return
+        if (message.senderId == currentUser?.id) return
+        if (sentReadMessageIds.containsKey(message.id)) return
+        sentReadMessageIds[message.id] = true
+        clearUnread(chatId)
+        scope.launch(Dispatchers.IO) {
+            runCatching { client.sendRead(chatId, message.id) }
+        }
     }
 
     private fun selectedChatTitle(): String =

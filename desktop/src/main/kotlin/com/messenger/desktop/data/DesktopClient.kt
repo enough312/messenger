@@ -3,6 +3,7 @@ package com.messenger.desktop.data
 import com.messenger.shared.dto.ChatListResponse
 import com.messenger.shared.dto.CreatePrivateChatRequest
 import com.messenger.shared.dto.LoginRequest
+import com.messenger.shared.dto.ReadMessageRequest
 import com.messenger.shared.dto.MessageListResponse
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.SendMessageRequest
@@ -26,6 +27,7 @@ import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -100,12 +102,21 @@ class DesktopClient {
         return response.decode<ChatListResponse>().items
     }
 
-    suspend fun messages(baseUrl: String, accessToken: String, chatId: String): List<Message> {
+    suspend fun messages(
+        baseUrl: String,
+        accessToken: String,
+        chatId: String,
+        cursor: String? = null,
+        limit: Int = 50,
+    ): MessagePage {
         val response = httpClient.get("${baseUrl.normalizeBaseUrl()}/chats/$chatId/messages") {
             accept(ContentType.Application.Json)
             bearerAuth(accessToken)
+            parameter("limit", limit)
+            cursor?.let { parameter("cursor", it) }
         }
-        return response.decode<MessageListResponse>().items
+        val page = response.decode<MessageListResponse>()
+        return MessagePage(items = page.items, nextCursor = page.nextCursor)
     }
 
     suspend fun sendMessage(baseUrl: String, accessToken: String, chatId: String, content: String): Message {
@@ -213,6 +224,22 @@ class DesktopClient {
         )
     }
 
+    suspend fun sendRead(chatId: String, messageId: String) {
+        val session = realtimeSession ?: return
+        session.send(
+            Frame.Text(
+                MessengerJson.encodeToString(
+                    WsEnvelope.serializer(),
+                    wsEnvelope(
+                        type = WsTypes.READ_MESSAGE,
+                        payload = ReadMessageRequest(chatId = chatId, messageId = messageId),
+                        json = MessengerJson,
+                    ),
+                ),
+            ),
+        )
+    }
+
     private suspend inline fun <reified T> HttpResponse.decode(): T {
         if (status.value in 200..299) return body()
         throw toDesktopClientException()
@@ -251,6 +278,11 @@ class DesktopClientException(
     val status: HttpStatusCode,
     override val message: String,
 ) : RuntimeException(message)
+
+data class MessagePage(
+    val items: List<Message>,
+    val nextCursor: String?,
+)
 
 sealed interface DesktopRealtimeEvent {
     data object Connected : DesktopRealtimeEvent
