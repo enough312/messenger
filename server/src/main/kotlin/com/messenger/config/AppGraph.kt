@@ -23,7 +23,7 @@ data class AppGraph(
     val config: AppConfig,
     val dataSource: HikariDataSource,
     val redisClient: RedisClient,
-    val s3Client: S3Client,
+    val s3Client: S3Client?,
     val registry: PrometheusMeterRegistry,
     val connectionManager: ConnectionManager,
     val userRepository: UserRepository,

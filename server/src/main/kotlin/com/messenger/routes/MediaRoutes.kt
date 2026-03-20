@@ -18,9 +18,7 @@ fun Route.publicMediaRoutes(graph: AppGraph) {
             val objectKey = call.parameters["objectKey"]
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing object key"))
             val response = graph.mediaService.download(objectKey)
-            val contentType = response.response().contentType()?.takeIf { it.isNotBlank() }
-                ?: "application/octet-stream"
-            call.respondBytes(response.asByteArray(), ContentType.parse(contentType))
+            call.respondBytes(response.bytes, ContentType.parse(response.contentType))
         }
     }
 }

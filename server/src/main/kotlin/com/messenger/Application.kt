@@ -74,16 +74,20 @@ private fun createGraph(config: AppConfig): AppGraph {
         append("${config.redisHost}:${config.redisPort}")
     }
     val redisClient = RedisClient.create(redisUrl)
-    val s3Client = S3Client.builder()
-        .endpointOverride(URI.create(config.minioEndpoint))
-        .credentialsProvider(
-            StaticCredentialsProvider.create(
-                AwsBasicCredentials.create(config.minioAccessKey, config.minioSecretKey),
-            ),
-        )
-        .region(Region.of(config.minioRegion))
-        .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(config.s3PathStyle).build())
-        .build()
+    val s3Client = if (config.mediaStorageMode.equals("s3", ignoreCase = true)) {
+        S3Client.builder()
+            .endpointOverride(URI.create(config.minioEndpoint))
+            .credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(config.minioAccessKey, config.minioSecretKey),
+                ),
+            )
+            .region(Region.of(config.minioRegion))
+            .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(config.s3PathStyle).build())
+            .build()
+    } else {
+        null
+    }
     val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
     val connectionManager = ConnectionManager()
 

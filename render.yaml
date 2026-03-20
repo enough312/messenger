@@ -12,12 +12,12 @@ services:
         value: production
       - key: SERVER_HOST
         value: 0.0.0.0
+      - key: MEDIA_STORAGE_MODE
+        value: local
+      - key: MEDIA_LOCAL_DIR
+        value: /opt/render/project/.render-media
       - key: DB_SSL_MODE
         value: require
-      - key: S3_PATH_STYLE
-        value: false
-      - key: S3_AUTO_CREATE_BUCKET
-        value: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: DB_URL
@@ -30,16 +30,6 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: MINIO_ENDPOINT
-        sync: false
-      - key: MINIO_REGION
-        value: auto
-      - key: MINIO_ACCESS_KEY
-        sync: false
-      - key: MINIO_SECRET_KEY
-        sync: false
-      - key: MINIO_BUCKET
-        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
