@@ -17,6 +17,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -33,12 +34,18 @@ import kotlinx.serialization.Serializable
 class DesktopClient {
     private val httpClient = HttpClient(CIO) {
         expectSuccess = false
+        install(HttpTimeout) {
+            requestTimeoutMillis = 180_000
+            connectTimeoutMillis = 30_000
+            socketTimeoutMillis = 180_000
+        }
         install(ContentNegotiation) {
             json(MessengerJson)
         }
     }
 
     suspend fun register(baseUrl: String, request: RegisterRequest): VerificationResponse {
+        wakeUp(baseUrl)
         val response = httpClient.post("${baseUrl.normalizeBaseUrl()}/auth/register") {
             accept(ContentType.Application.Json)
             contentType(ContentType.Application.Json)
@@ -48,6 +55,7 @@ class DesktopClient {
     }
 
     suspend fun login(baseUrl: String, request: LoginRequest): TokenResponse {
+        wakeUp(baseUrl)
         val response = httpClient.post("${baseUrl.normalizeBaseUrl()}/auth/login") {
             accept(ContentType.Application.Json)
             contentType(ContentType.Application.Json)
@@ -118,6 +126,14 @@ class DesktopClient {
         val message = runCatching { MessengerJson.decodeFromString<ApiErrorPayload>(text).message }
             .getOrElse { text.ifBlank { status.description } }
         return DesktopClientException(status, message)
+    }
+
+    private suspend fun wakeUp(baseUrl: String) {
+        runCatching {
+            httpClient.get("${baseUrl.normalizeBaseUrl()}/health") {
+                accept(ContentType.Application.Json)
+            }
+        }
     }
 
     private fun String.normalizeBaseUrl(): String = trim().trimEnd('/')
