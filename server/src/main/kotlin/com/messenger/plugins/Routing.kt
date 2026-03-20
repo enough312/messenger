@@ -35,10 +35,15 @@ fun Application.configureRouting(graph: AppGraph) {
         get("/health") {
             val dbOk = runCatching { graph.dataSource.connection.use { !it.isClosed } }.getOrDefault(false)
             val redisOk = runCatching { graph.redisClient.connect().use { it.sync().ping() == "PONG" } }.getOrDefault(false)
+            val status = when {
+                dbOk && redisOk -> "ok"
+                dbOk -> "degraded"
+                else -> "unhealthy"
+            }
             call.respond(
-                if (dbOk && redisOk) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
+                if (dbOk) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
                 HealthResponse(
-                    status = if (dbOk && redisOk) "ok" else "degraded",
+                    status = status,
                     db = dbOk,
                     redis = redisOk,
                     uptime = ManagementFactory.getRuntimeMXBean().uptime / 1000,

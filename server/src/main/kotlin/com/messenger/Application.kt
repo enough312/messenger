@@ -66,13 +66,13 @@ private fun createGraph(config: AppConfig): AppGraph {
         config.dbSslMode?.let { addDataSourceProperty("sslmode", it) }
     }
     val dataSource = HikariDataSource(hikariConfig)
-    val redisUrl = config.redisUrl ?: buildString {
+    val redisUrl = (config.redisUrl ?: buildString {
         append("redis://")
         if (!config.redisPassword.isNullOrBlank()) {
             append(":${config.redisPassword}@")
         }
         append("${config.redisHost}:${config.redisPort}")
-    }
+    }).normalizeRedisUrl()
     val redisClient = RedisClient.create(redisUrl)
     val s3Client = if (config.mediaStorageMode.equals("s3", ignoreCase = true)) {
         S3Client.builder()
@@ -126,4 +126,11 @@ private fun createGraph(config: AppConfig): AppGraph {
         mediaService = mediaService,
         callService = callService,
     )
+}
+
+private fun String.normalizeRedisUrl(): String {
+    if (startsWith("redis://") && contains("upstash.io", ignoreCase = true)) {
+        return replaceFirst("redis://", "rediss://")
+    }
+    return this
 }
