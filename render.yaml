@@ -1,0 +1,66 @@
+services:
+  - type: web
+    name: messenger-server
+    runtime: docker
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SERVER_HOST
+        value: 0.0.0.0
+      - key: DB_SSL_MODE
+        value: require
+      - key: S3_PATH_STYLE
+        value: false
+      - key: S3_AUTO_CREATE_BUCKET
+        value: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MINIO_ENDPOINT
+        sync: false
+      - key: MINIO_REGION
+        value: auto
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_BUCKET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CREDENTIALS_PATH
+        sync: false
+      - key: TOTP_ISSUER
+        value: Messenger
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false
+      - key: STUN_URL
+        value: stun:stun.l.google.com:19302

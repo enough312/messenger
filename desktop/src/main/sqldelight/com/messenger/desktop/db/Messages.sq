@@ -1,0 +1,18 @@
+CREATE TABLE messages (
+  id TEXT NOT NULL PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  content TEXT
+);
+
+selectByChatId:
+SELECT * FROM messages
+WHERE chat_id = ?;
+
+insertOrReplace:
+INSERT OR REPLACE INTO messages(id, chat_id, sender_id, content)
+VALUES (?, ?, ?, ?);
+
+deleteById:
+DELETE FROM messages
+WHERE id = ?;
