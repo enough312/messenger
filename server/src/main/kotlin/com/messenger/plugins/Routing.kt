@@ -19,6 +19,16 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import java.lang.management.ManagementFactory
+import kotlinx.serialization.Serializable
+
+@Serializable
+private data class HealthResponse(
+    val status: String,
+    val db: Boolean,
+    val redis: Boolean,
+    val uptime: Long,
+    val version: String,
+)
 
 fun Application.configureRouting(graph: AppGraph) {
     routing {
@@ -27,12 +37,12 @@ fun Application.configureRouting(graph: AppGraph) {
             val redisOk = runCatching { graph.redisClient.connect().use { it.sync().ping() == "PONG" } }.getOrDefault(false)
             call.respond(
                 if (dbOk && redisOk) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
-                mapOf(
-                    "status" to if (dbOk && redisOk) "ok" else "degraded",
-                    "db" to dbOk,
-                    "redis" to redisOk,
-                    "uptime" to ManagementFactory.getRuntimeMXBean().uptime / 1000,
-                    "version" to "1.0.0",
+                HealthResponse(
+                    status = if (dbOk && redisOk) "ok" else "degraded",
+                    db = dbOk,
+                    redis = redisOk,
+                    uptime = ManagementFactory.getRuntimeMXBean().uptime / 1000,
+                    version = "1.0.0",
                 ),
             )
         }
