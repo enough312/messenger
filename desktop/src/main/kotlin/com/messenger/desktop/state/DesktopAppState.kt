@@ -8,13 +8,17 @@ import androidx.compose.runtime.setValue
 import com.messenger.desktop.data.DesktopClient
 import com.messenger.desktop.data.DesktopClientException
 import com.messenger.desktop.data.DesktopRealtimeEvent
+import com.messenger.desktop.tray.SystemTrayController
 import com.messenger.shared.model.MessageStatus
 import com.messenger.shared.dto.LoginRequest
+import com.messenger.shared.dto.SendMessageRequest
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.TokenResponse
+import com.messenger.shared.model.MessageType
 import com.messenger.shared.model.Chat
 import com.messenger.shared.model.Message
 import com.messenger.shared.model.User
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,6 +58,7 @@ class DesktopAppState(
     var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
     var hasOlderMessages by mutableStateOf(false)
     var isLoadingOlderMessages by mutableStateOf(false)
+    var isUploadingAttachment by mutableStateOf(false)
 
     val chats = mutableStateListOf<Chat>()
     val messages = mutableStateListOf<Message>()
@@ -240,8 +245,62 @@ class DesktopAppState(
         messagesCursor = null
         hasOlderMessages = false
         isLoadingOlderMessages = false
+        isUploadingAttachment = false
         infoMessage = "Logged out"
         errorMessage = null
+    }
+
+    fun sendAttachment(file: File) {
+        val chatId = selectedChatId ?: return
+        val token = accessToken ?: return
+        scope.launch {
+            isUploadingAttachment = true
+            errorMessage = null
+            runCatching {
+                val upload = client.uploadMedia(baseUrl, token, file)
+                val messageType = inferMessageType(upload.contentType)
+                val optimisticMessage = createOptimisticMessage(
+                    chatId = chatId,
+                    content = file.name,
+                    type = messageType,
+                    mediaUrl = upload.url,
+                    mediaMime = upload.contentType,
+                    mediaSize = upload.size,
+                )
+                messages.add(optimisticMessage)
+                val sent = client.sendMessage(
+                    baseUrl = baseUrl,
+                    accessToken = token,
+                    chatId = chatId,
+                    request = SendMessageRequest(
+                        content = file.name,
+                        type = messageType,
+                        mediaUrl = upload.url,
+                        mediaMime = upload.contentType,
+                        mediaSize = upload.size,
+                    ),
+                )
+                replaceMessage(optimisticMessage.id, sent)
+                updateChatLocally(sent)
+                refreshChats(token)
+            }.onFailure { throwable ->
+                errorMessage = throwable.message ?: "Failed to upload file"
+            }
+            isUploadingAttachment = false
+        }
+    }
+
+    fun reactToMessage(messageId: String, emoji: String) {
+        val token = accessToken ?: return
+        scope.launch {
+            runCatching {
+                val updated = client.reactToMessage(baseUrl, token, messageId, emoji)
+                upsertMessage(updated)
+                updateChatLocalMessage(updated)
+            }.onFailure { throwable ->
+                errorMessage = throwable.message ?: "Failed to add reaction"
+            }
+        }
     }
 
     private suspend fun onLoginSuccess(token: TokenResponse) {
@@ -329,12 +388,14 @@ class DesktopAppState(
                     markMessageRead(event.message)
                 } else if (event.message.senderId != currentUser?.id) {
                     incrementUnread(event.message.chatId)
+                    notifyAboutMessage(event.message)
                 }
                 updateChatLocally(event.message)
                 refreshChats(token)
             }
 
             is DesktopRealtimeEvent.Typing -> handleTypingEvent(event)
+            is DesktopRealtimeEvent.ReactionAdded -> applyReaction(event.messageId, event.emoji, event.userId)
         }
     }
 
@@ -394,6 +455,16 @@ class DesktopAppState(
         duplicateIndexes.forEach { messages.removeAt(it) }
     }
 
+    private fun updateChatLocalMessage(message: Message) {
+        val index = chats.indexOfFirst { it.id == message.chatId }
+        if (index < 0) return
+        val chat = chats[index]
+        chats[index] = chat.copy(
+            lastMessage = if (chat.lastMessage?.id == message.id) message else chat.lastMessage,
+            unreadCount = effectiveUnreadCount(chat),
+        )
+    }
+
     private fun <T> MutableList<T>.replaceAll(newItems: List<T>) {
         clear()
         addAll(newItems)
@@ -435,12 +506,31 @@ class DesktopAppState(
     }
 
     private fun createOptimisticMessage(chatId: String, content: String): Message {
+        return createOptimisticMessage(
+            chatId = chatId,
+            content = content,
+            type = MessageType.TEXT,
+        )
+    }
+
+    private fun createOptimisticMessage(
+        chatId: String,
+        content: String,
+        type: MessageType,
+        mediaUrl: String? = null,
+        mediaMime: String? = null,
+        mediaSize: Long? = null,
+    ): Message {
         val now = System.currentTimeMillis()
         return Message(
             id = "local-$now",
             chatId = chatId,
             senderId = currentUser?.id.orEmpty(),
+            type = type,
             content = content,
+            mediaUrl = mediaUrl,
+            mediaMime = mediaMime,
+            mediaSize = mediaSize,
             status = MessageStatus.SENDING,
             createdAt = now,
         )
@@ -507,6 +597,37 @@ class DesktopAppState(
         scope.launch(Dispatchers.IO) {
             runCatching { client.sendRead(chatId, message.id) }
         }
+    }
+
+    private fun applyReaction(messageId: String, emoji: String, userId: String) {
+        val index = messages.indexOfFirst { it.id == messageId }
+        if (index < 0) return
+        val message = messages[index]
+        val currentUsers = message.reactions[emoji].orEmpty()
+        if (userId in currentUsers) return
+        val updatedUsers = (currentUsers + userId).distinct()
+        val updatedReactions = message.reactions.toMutableMap().apply { put(emoji, updatedUsers) }
+        val updatedMessage = message.copy(reactions = updatedReactions)
+        messages[index] = updatedMessage
+        updateChatLocalMessage(updatedMessage)
+    }
+
+    private fun notifyAboutMessage(message: Message) {
+        val chat = chats.firstOrNull { it.id == message.chatId }
+        val title = chat?.name ?: "New message"
+        val body: String = when {
+            !message.content.isNullOrBlank() -> message.content.orEmpty()
+            message.mediaUrl != null -> "Sent an attachment"
+            else -> "You have a new message"
+        }
+        SystemTrayController.showNotification(title, body)
+    }
+
+    private fun inferMessageType(contentType: String): MessageType = when {
+        contentType.startsWith("image/") -> MessageType.IMAGE
+        contentType.startsWith("video/") -> MessageType.VIDEO
+        contentType.startsWith("audio/") -> MessageType.AUDIO
+        else -> MessageType.FILE
     }
 
     private fun selectedChatTitle(): String =

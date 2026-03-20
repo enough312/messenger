@@ -182,6 +182,7 @@ fun ChatPanel(
                     MessageBubble(
                         message = message,
                         isOwn = currentUserId != null && message.senderId == currentUserId,
+                        onReact = state::reactToMessage,
                     )
                 }
             }
@@ -200,10 +201,18 @@ fun ChatPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            if (state.isUploadingAttachment) {
+                Text(
+                    text = "Uploading attachment...",
+                    color = MessengerColors.TextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             InputBar(
                 chatId = chatId,
-                enabled = !state.isBusy,
+                enabled = !state.isBusy && !state.isUploadingAttachment,
                 onTypingChanged = state::onComposerChanged,
+                onAttach = state::sendAttachment,
                 onSend = state::sendMessage,
             )
         }

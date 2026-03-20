@@ -30,12 +30,15 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.messenger.desktop.ui.MessengerColors
+import com.messenger.desktop.ui.pickAttachmentFile
+import java.io.File
 
 @Composable
 fun InputBar(
     chatId: String,
     enabled: Boolean = true,
     onTypingChanged: (String) -> Unit,
+    onAttach: (File) -> Unit = {},
     onSend: (String) -> Unit,
 ) {
     var value by remember(chatId) { mutableStateOf("") }
@@ -59,7 +62,15 @@ fun InputBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            ActionCircleButton(label = "+", enabled = false)
+            ActionCircleButton(
+                label = "Attach",
+                enabled = enabled,
+                onClick = {
+                    pickAttachmentFile()?.let { file ->
+                        onAttach(file)
+                    }
+                },
+            )
             OutlinedTextField(
                 value = value,
                 onValueChange = {
@@ -84,7 +95,7 @@ fun InputBar(
                 shape = RoundedCornerShape(20.dp),
             )
             ActionCircleButton(
-                label = if (value.isBlank()) "Mic" else "Send",
+                label = if (value.isBlank()) "Ready" else "Send",
                 primary = value.isNotBlank(),
                 enabled = enabled,
                 onClick = { submit() },

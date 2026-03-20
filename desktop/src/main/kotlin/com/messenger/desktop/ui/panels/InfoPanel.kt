@@ -21,6 +21,11 @@ import com.messenger.desktop.ui.PersonAvatar
 @Composable
 fun InfoPanel(state: DesktopAppState) {
     val selectedChat = state.chats.firstOrNull { it.id == state.selectedChatId }
+    val connectionLabel = when (state.connectionState) {
+        ConnectionState.CONNECTED -> "Connected"
+        ConnectionState.CONNECTING -> "Reconnecting"
+        ConnectionState.DISCONNECTED -> "Offline"
+    }
 
     Column(
         modifier = Modifier
@@ -57,6 +62,14 @@ fun InfoPanel(state: DesktopAppState) {
         }
 
         DetailCard(
+            title = "Connection",
+            lines = listOf(
+                "State: $connectionLabel",
+                "Server: ${state.baseUrl}",
+            ),
+        )
+
+        DetailCard(
             title = "Profile",
             lines = listOf(
                 "Email: ${state.currentUser?.email ?: "Not authenticated"}",
@@ -67,8 +80,9 @@ fun InfoPanel(state: DesktopAppState) {
         DetailCard(
             title = "Conversation",
             lines = listOf(
-                "Chat ID: ${state.selectedChatId ?: "No chat selected"}",
+                "Chat: ${selectedChat?.name ?: "No chat selected"}",
                 "Messages loaded: ${state.messages.size}",
+                "Unread in chat list: ${selectedChat?.unreadCount ?: 0}",
             ),
         )
 

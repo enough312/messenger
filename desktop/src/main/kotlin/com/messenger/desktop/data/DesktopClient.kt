@@ -3,8 +3,10 @@ package com.messenger.desktop.data
 import com.messenger.shared.dto.ChatListResponse
 import com.messenger.shared.dto.CreatePrivateChatRequest
 import com.messenger.shared.dto.LoginRequest
+import com.messenger.shared.dto.MediaUploadResponse
 import com.messenger.shared.dto.ReadMessageRequest
 import com.messenger.shared.dto.MessageListResponse
+import com.messenger.shared.dto.ReactionRequest
 import com.messenger.shared.dto.RegisterRequest
 import com.messenger.shared.dto.SendMessageRequest
 import com.messenger.shared.dto.TokenResponse
@@ -30,6 +32,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -48,6 +51,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.Serializable
+import java.io.File
+import java.nio.file.Files
 
 class DesktopClient {
     @Volatile
@@ -119,12 +124,42 @@ class DesktopClient {
         return MessagePage(items = page.items, nextCursor = page.nextCursor)
     }
 
-    suspend fun sendMessage(baseUrl: String, accessToken: String, chatId: String, content: String): Message {
+    suspend fun sendMessage(baseUrl: String, accessToken: String, chatId: String, content: String): Message =
+        sendMessage(
+            baseUrl = baseUrl,
+            accessToken = accessToken,
+            chatId = chatId,
+            request = SendMessageRequest(content = content),
+        )
+
+    suspend fun sendMessage(baseUrl: String, accessToken: String, chatId: String, request: SendMessageRequest): Message {
         val response = httpClient.post("${baseUrl.normalizeBaseUrl()}/chats/$chatId/messages") {
             accept(ContentType.Application.Json)
             contentType(ContentType.Application.Json)
             bearerAuth(accessToken)
-            setBody(SendMessageRequest(content = content))
+            setBody(request)
+        }
+        return response.decode()
+    }
+
+    suspend fun uploadMedia(baseUrl: String, accessToken: String, file: File): MediaUploadResponse {
+        val contentType = Files.probeContentType(file.toPath()) ?: "application/octet-stream"
+        val response = httpClient.post("${baseUrl.normalizeBaseUrl()}/media/upload") {
+            accept(ContentType.Application.Json)
+            contentType(ContentType.parse(contentType))
+            bearerAuth(accessToken)
+            header("X-File-Name", file.name)
+            setBody(file.readBytes())
+        }
+        return response.decode()
+    }
+
+    suspend fun reactToMessage(baseUrl: String, accessToken: String, messageId: String, emoji: String): Message {
+        val response = httpClient.post("${baseUrl.normalizeBaseUrl()}/messages/$messageId/reactions") {
+            accept(ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
+            bearerAuth(accessToken)
+            setBody(ReactionRequest(emoji))
         }
         return response.decode()
     }
@@ -192,6 +227,12 @@ class DesktopClient {
                                     isTyping = envelope.payload["action"]?.toString()?.trim('"') == "start",
                                 ),
                             )
+                        }
+                        WsTypes.REACTION_ADDED -> {
+                            val messageId = envelope.payload["messageId"]?.toString()?.trim('"') ?: continue
+                            val emoji = envelope.payload["emoji"]?.toString()?.trim('"') ?: continue
+                            val userId = envelope.payload["userId"]?.toString()?.trim('"') ?: continue
+                            onEvent(DesktopRealtimeEvent.ReactionAdded(messageId, emoji, userId))
                         }
                         WsTypes.ERROR -> onEvent(
                             DesktopRealtimeEvent.Error(
@@ -288,5 +329,6 @@ sealed interface DesktopRealtimeEvent {
     data object Connected : DesktopRealtimeEvent
     data class NewMessage(val message: Message) : DesktopRealtimeEvent
     data class Typing(val chatId: String, val userId: String, val isTyping: Boolean) : DesktopRealtimeEvent
+    data class ReactionAdded(val messageId: String, val emoji: String, val userId: String) : DesktopRealtimeEvent
     data class Error(val message: String) : DesktopRealtimeEvent
 }
