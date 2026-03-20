@@ -8,29 +8,28 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.messenger.desktop.state.DesktopAppState
 import com.messenger.desktop.ui.components.InputBar
 import com.messenger.desktop.ui.components.MessageBubble
 
 @Composable
-fun ChatPanel(chatId: String) {
-    var messages by remember(chatId) { mutableStateOf(List(8) { "Message ${it + 1} in $chatId" }) }
+fun ChatPanel(
+    state: DesktopAppState,
+    chatId: String,
+) {
+    val currentUserId = state.currentUser?.id
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Chat: $chatId")
         LazyColumn(modifier = Modifier.weight(1f, fill = true), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(messages) { message ->
-                MessageBubble(message)
+            items(state.messages, key = { it.id }) { message ->
+                MessageBubble(message, isOwn = currentUserId != null && message.senderId == currentUserId)
             }
         }
         InputBar(
-            onSend = { text ->
-                if (text.isNotBlank()) messages = messages + text
-            },
+            enabled = !state.isBusy,
+            onSend = state::sendMessage,
         )
     }
 }

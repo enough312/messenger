@@ -12,12 +12,10 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.messenger.desktop.state.DesktopAppState
 import com.messenger.desktop.ui.panels.ChatPanel
 import com.messenger.desktop.ui.panels.InfoPanel
 import com.messenger.desktop.ui.panels.SidebarPanel
@@ -25,7 +23,12 @@ import org.koin.core.Koin
 
 @Composable
 fun MainWindow(koin: Koin) {
-    var selectedChatId by remember { mutableStateOf<String?>(null) }
+    val state = remember { koin.get<DesktopAppState>() }
+    if (state.accessToken == null) {
+        AuthScreen(state)
+        return
+    }
+
     Row(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -34,18 +37,19 @@ fun MainWindow(koin: Koin) {
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
             SidebarPanel(
-                onSelectChat = { selectedChatId = it },
+                state = state,
+                onSelectChat = state::loadMessages,
             )
         }
         Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            if (selectedChatId != null) {
-                ChatPanel(selectedChatId!!)
+            if (state.selectedChatId != null) {
+                ChatPanel(state, state.selectedChatId!!)
             } else {
                 Text("Select a chat", modifier = Modifier.padding(24.dp))
             }
         }
         Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
-        InfoPanel(selectedChatId)
+        InfoPanel(state)
     }
 }

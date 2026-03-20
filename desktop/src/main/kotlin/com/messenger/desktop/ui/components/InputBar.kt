@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 
 @Composable
 fun InputBar(
+    enabled: Boolean = true,
     onSend: (String) -> Unit,
 ) {
     var value by remember { mutableStateOf("") }
@@ -23,11 +24,12 @@ fun InputBar(
             onValueChange = { value = it },
             modifier = Modifier.weight(1f),
             label = { Text("Message") },
+            enabled = enabled,
         )
         Button(onClick = {
             onSend(value)
             value = ""
-        }) {
+        }, enabled = enabled) {
             Text("Send")
         }
     }
