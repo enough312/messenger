@@ -56,7 +56,9 @@ data class AppConfig(
                 host = env("SERVER_HOST", "0.0.0.0"),
                 port = envOptional("PORT")?.toInt()
                     ?: env("SERVER_PORT", "8080").toInt(),
-                publicBaseUrl = env("PUBLIC_BASE_URL", "http://localhost:8080"),
+                publicBaseUrl = envOptional("PUBLIC_BASE_URL")
+                    ?: envOptional("RENDER_EXTERNAL_URL")
+                    ?: "http://localhost:8080",
                 dbUrl = dbUrl,
                 dbUser = envOptional("DB_USER")
                     ?: envOptional("PGUSER")
