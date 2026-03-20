@@ -41,7 +41,7 @@ fun Application.configureRouting(graph: AppGraph) {
                 else -> "unhealthy"
             }
             call.respond(
-                if (dbOk) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
+                HttpStatusCode.OK,
                 HealthResponse(
                     status = status,
                     db = dbOk,
